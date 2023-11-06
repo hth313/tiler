@@ -1,3 +1,4 @@
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
 module Main where
 
@@ -9,27 +10,54 @@ import qualified Data.ByteString as L
 import Data.List
 import qualified Data.Map as Map
 import qualified Data.Vector.Storable as V
+import Options.Applicative
 import System.Exit
 import System.FilePath
 
-tileWidth = 16
-tileHeight = 16
+data Options = Options {
+    tileWidth :: Int,
+    tileHeight :: Int,
+    extractPalette :: Bool,
+    filename :: FilePath
+}
+
+options :: Parser Options
+options = Options
+      <$> option auto
+          ( long "width"
+          <> showDefault
+          <> value 16
+          <> help "Tile or sprite width" )
+      <*> option auto
+          ( long "height"
+          <> showDefault
+          <> value 16
+          <> help "Tile or sprite height" )
+      <*> switch
+          ( long "extract-palette"
+          <> help "Extract and emit a .palette file")
+      <*> argument str (metavar "FILE")
 
 main :: IO ()
-main = processImage "map.bmp"
+main = processImage =<< execParser opts
+  where
+    opts = info (options <**> helper)
+      ( fullDesc
+      <> progDesc "Extract tiles or sprites from a .bmp"
+      <> header "tiler - a tile and sprite extractor" )
 
-processImage filename = do
-  imageData <- decodeBitmapWithPaletteAndMetadata <$> L.readFile filename
+processImage options = do
+  imageData <- decodeBitmapWithPaletteAndMetadata <$> L.readFile (filename options)
   case imageData of
-    Right (PalettedRGB8 image palette, meta) -> tileImage filename image palette
-    Left err -> errout $ "failed to read " <> show filename <> ": " <> err
+    Right (PalettedRGB8 image palette, meta) -> tileImage options image palette
+    Left err -> errout $ "failed to read " <> show (filename options) <> ": " <> err
     _ -> errout "not in indexed 8 bit RGB"
 
 errout message = do
   putStrLn message
   exitFailure
 
-tileImage filename image palette =
+tileImage Options{..} image palette =
   let xtiles = imageWidth image `div` tileWidth
       ytiles = imageHeight image `div` tileHeight
       tileCoordinates = [ (y,x) | x <- [0 .. xtiles - 1], y <- [0 .. ytiles - 1] ]
@@ -56,4 +84,4 @@ tileImage filename image palette =
       when (Map.size table > 255) exitFailure
       L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexed))
       L.writeFile (replaceExtension filename ".tiledata") (mconcat tabledata)
-      L.writeFile (replaceExtension filename ".palette") paletteData
+      when extractPalette (L.writeFile (replaceExtension filename ".palette") paletteData)
