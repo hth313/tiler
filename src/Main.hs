@@ -9,6 +9,7 @@ import Control.Monad
 import qualified Data.ByteString as L
 import Data.List
 import qualified Data.Map as Map
+import Data.Maybe
 import qualified Data.Vector.Storable as V
 import Options.Applicative
 import System.Exit
@@ -18,6 +19,8 @@ data Options = Options {
     tileWidth :: Int,
     tileHeight :: Int,
     extractPalette :: Bool,
+    sprites :: Bool,
+    spriteCount :: Maybe Int,
     filename :: FilePath
 }
 
@@ -36,6 +39,13 @@ options = Options
       <*> switch
           ( long "extract-palette"
           <> help "Extract and emit a .palette file")
+      <*> switch
+          ( long "sprites"
+          <> help "Generate sprites")
+      <*> (optional $ option auto
+           ( long "sprite-count"
+           <> metavar "COUNT"
+           <> help "Generate COUNT sprites, defaults to all in given file" ))
       <*> argument str (metavar "FILE")
 
 main :: IO ()
@@ -79,9 +89,22 @@ tileImage Options{..} image palette =
       paletteData = L.pack $ go (V.toList $ imageData $ palettedAsImage palette)
         where go (a:b:c:xs) = 0 : a : b : c : go xs
               go _ = []
+
+      generateTiles = do
+        putStrLn $ "using  " <> show (Map.size table) <> " tiles"
+        L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexed))
+        L.writeFile (replaceExtension filename ".tiledata") (mconcat tabledata)
+
+      generateSprites =
+        let count = fromMaybe (length tiles) spriteCount
+            generate (n, spriteData) =
+              let spritefile = dropExtension filename <> "-" <> show n -<.> ".sprite"
+              in L.writeFile spritefile (L.pack spriteData)
+        in do
+          putStrLn $ "generating  " <> show count <> " sprites"
+          mapM_ generate (take count (zip [0..] tiles))
+
     in do
-      putStrLn $ "using  " <> show (Map.size table) <> " tiles"
       when (Map.size table > 255) exitFailure
-      L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexed))
-      L.writeFile (replaceExtension filename ".tiledata") (mconcat tabledata)
+      if sprites then generateSprites else generateTiles
       when extractPalette (L.writeFile (replaceExtension filename ".palette") paletteData)
