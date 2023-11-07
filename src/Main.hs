@@ -60,13 +60,13 @@ errout message = do
 tileImage Options{..} image palette =
   let xtiles = imageWidth image `div` tileWidth
       ytiles = imageHeight image `div` tileHeight
-      tileCoordinates = [ (y,x) | x <- [0 .. xtiles - 1], y <- [0 .. ytiles - 1] ]
+      tileCoordinates = sequence [ [0 .. ytiles - 1], [0 .. xtiles - 1] ]
 
-      tiledata (ty,tx) =
+      tiledata [ty,tx] =
         let xstart = tx * tileWidth
             ystart = ty * tileHeight
-            rect = [ (y,x) | x <- [0 .. tileWidth - 1], y <- [0 .. tileHeight - 1] ]
-        in map (\(y,x) -> pixelAt image (x + xstart) (y + ystart)) rect
+            rect = sequence [ [0 .. tileHeight - 1], [0 .. tileWidth - 1] ]
+        in map (\[y,x] -> pixelAt image (x + xstart) (y + ystart)) rect
 
       tiles = map tiledata tileCoordinates
       table = Map.fromList $ zip (nub tiles) [0..]
