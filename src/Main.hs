@@ -14,6 +14,8 @@ import qualified Data.Vector.Storable as V
 import Options.Applicative
 import System.Exit
 import System.FilePath
+import System.Random
+import Debug.Trace
 
 data Options = Options {
     tileWidth :: Int,
@@ -66,7 +68,7 @@ options = Options
       <*> (option auto
            ( long "noise-level"
            <> showDefault
-           <> value 8
+           <> value 3
            <> metavar "percentage"
            <> help "The amount of noise to add"))
       <*> argument str (metavar "FILE")
@@ -80,9 +82,10 @@ main = processImage =<< execParser opts
       <> header "tiler - a tile and sprite extractor" )
 
 processImage options = do
+  rg <- getStdGen
   imageData <- decodeBitmapWithPaletteAndMetadata <$> L.readFile (filename options)
   case imageData of
-    Right (PalettedRGB8 image palette, meta) -> tileImage options image palette
+    Right (PalettedRGB8 image palette, meta) -> tileImage options rg image palette
     Left err -> errout $ "failed to read " <> show (filename options) <> ": " <> err
     _ -> errout "not in indexed 8 bit RGB"
 
@@ -90,7 +93,7 @@ errout message = do
   putStrLn message
   exitFailure
 
-tileImage Options{..} image palette =
+tileImage Options{..} rg image palette =
   let xtiles = imageWidth image `div` tileWidth
       ytiles = imageHeight image `div` tileHeight
       tileCoordinates = sequence [ [0 .. ytiles - 1], [0 .. xtiles - 1] ]
@@ -103,18 +106,36 @@ tileImage Options{..} image palette =
 
       tiles = nub $ map tiledata tileCoordinates
 
-      table = Map.fromList $ zip tilesWithNoise [0..]
+      table = Map.fromList $ zip tiles (zip [0..] tilesWithNoise)
 
-      (tilesWithNoise, backgroundTilep, backgroundNoiseTileIndices)
+      tilesWithNoise
+        | isNothing mbackgroundNoiseTileRange = tilesWithBlanks
+        | otherwise = map addNoise (zip3 tilesWithBlanks randoms randomNoise)
+        where
+          Just backgroundNoiseTileRange = mbackgroundNoiseTileRange
+          randoms = go (randomRs (0, pixelCountTile - 1) rg)
+            where
+              go xs = let (g, gs) = splitAt noisePixels xs
+                      in g : go gs
+          randomNoise = go (randomRs (0, length noiseColors - 1) rg)
+            where
+              go xs = let (g, gs) = splitAt noisePixels xs
+                      in g : go gs
+
+          noisePixels = noiseLevel * pixelCountTile `div` 100
+
+      pixelCountTile = tileHeight * tileWidth
+
+      (tilesWithBlanks, backgroundTilep, mbackgroundNoiseTileRange)
         | isNothing noiseOnColor = useNoNoiseTiles
         | null noiseColors = useNoNoiseTiles
         | length tiles < maxTileCount =
-            ( map addNoise tilesNoBackground <> map addNoise noiseTiles
+            ( tilesNoBackground <> noiseTiles
             , backgroundTilep
-            , backgroundNoiseTileIndices)
+            , Just backgroundNoiseTileRange)
         | otherwise = useNoNoiseTiles
         where
-          useNoNoiseTiles = (tiles, const False, [])
+          useNoNoiseTiles = (tiles, const False, Nothing)
           Just background = noiseOnColor
           backgroundTile = makeTileOfColor background
           tilesNoBackground = backgroundTile `delete` tiles
@@ -122,16 +143,27 @@ tileImage Options{..} image palette =
           actualTileCount = length tilesNoBackground
           noiseTiles = replicate unused backgroundTile
           backgroundTilep tile = tile == backgroundTile
-          backgroundNoiseTileIndices = [actualTileCount .. maxTileCount - 1]
+          backgroundNoiseTileRange = (actualTileCount, maxTileCount - 1)
 
-      addNoise tile = tile
+      addNoise (tile, randoms, noise) = go sortedRandoms (zip [0..] tile) noise
+        where
+          Just background = fromIntegral <$> noiseOnColor
+          sortedRandoms = sort (nub randoms)
+          go [] xs noise = map snd xs
+          go nns@(n:ns) ((np,pixel):xs) nnoises@(noiseIndex : noises)
+            | n == np, pixel == background =
+                fromIntegral (noiseColors !! noiseIndex) : go ns xs noises
+            | n == np =
+                pixel : go ns xs nnoises
+            | otherwise =
+                pixel : go nns xs nnoises
 
-      makeTileOfColor color = replicate (tileHeight * tileWidth) (fromIntegral color)
+      makeTileOfColor color = replicate pixelCountTile (fromIntegral color)
 
       indexed = map index tiles
-        where index tile = let Just n = Map.lookup tile table in n
+        where index tile = let Just (n, _noised) = Map.lookup tile table in n
 
-      tabledata = map (L.pack . fst) (sortOn snd (Map.assocs table))
+      tabledata = map (L.pack . snd . snd) (sortOn (fst . snd) (Map.assocs table))
 
       paletteData = L.pack $ go (V.toList $ imageData $ palettedAsImage palette)
         where go (a:b:c:xs) = 0 : a : b : c : go xs
