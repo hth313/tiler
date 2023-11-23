@@ -18,9 +18,14 @@ import System.FilePath
 data Options = Options {
     tileWidth :: Int,
     tileHeight :: Int,
+    maxTileCount :: Int,
     extractPalette :: Bool,
     sprites :: Bool,
     spriteCount :: Maybe Int,
+    textBackgroundTile :: Maybe Int,
+    noiseOnColor :: Maybe Int,
+    noiseColors :: [Int],
+    noiseLevel :: Int,
     filename :: FilePath
 }
 
@@ -36,6 +41,11 @@ options = Options
           <> showDefault
           <> value 16
           <> help "Tile or sprite height" )
+      <*> option auto
+          ( long "max-tiles"
+          <> showDefault
+          <> value 256
+          <> help "Maximum tiles that can be generated" )
       <*> switch
           ( long "extract-palette"
           <> help "Extract and emit a .palette file")
@@ -45,7 +55,25 @@ options = Options
       <*> (optional $ option auto
            ( long "sprite-count"
            <> metavar "COUNT"
-           <> help "Generate COUNT sprites, defaults to all in given file" ))
+           <> help "Generate COUNT sprites, defaults to all in given file"))
+      <*> (optional $ option auto
+           ( long "text-background"
+           <> metavar "COLOR"
+           <> help "Use tile 0 as solid background (for text overlay), specify color used"))
+      <*> (optional $ option auto
+           ( long "noise-on-color"
+           <> metavar "COLOR"
+           <> help "The given color is 'background' on which we want to add noise"))
+      <*> (many $ option auto
+           ( long "noise-color"
+           <> metavar "COLOR"
+           <> help "Add given color to one of the used noise colors"))
+      <*> (option auto
+           ( long "noise-level"
+           <> showDefault
+           <> value 8
+           <> metavar "percentage"
+           <> help "The amount of noise to add"))
       <*> argument str (metavar "FILE")
 
 main :: IO ()
@@ -79,7 +107,40 @@ tileImage Options{..} image palette =
         in map (\[y,x] -> pixelAt image (x + xstart) (y + ystart)) rect
 
       tiles = map tiledata tileCoordinates
-      table = Map.fromList $ zip (nub tiles) [0..]
+
+      table = Map.fromList $ zip tilesWithNoise [0..]
+
+      (tilesWithNoise, backgroundTilep, backgroundNoiseTileIndices)
+        | isNothing noiseOnColor = useNoNoiseTiles
+        | null noiseColors = useNoNoiseTiles
+        | length tilesWithBackground < maxTileCount =
+            ( tilesHead <> map addNoise tilesTail <> map addNoise noiseTiles
+            , backgroundTilep
+            , backgroundNoiseTileIndices)
+        | otherwise = useNoNoiseTiles
+        where
+          useNoNoiseTiles = (tilesWithBackground, const False, [])
+          Just background = noiseOnColor
+          backgroundTile = makeTileOfColor background
+          (tilesHead, tilesTail0)
+            | isJust textBackgroundTile = splitAt 1 tilesWithBackground
+            | otherwise = ([], tilesWithBackground)
+          tilesTail = backgroundTile `delete` tilesTail0
+          unused = maxTileCount - actualTileCount
+          actualTileCount = length (tilesHead <> tilesTail)
+          noiseTiles = replicate unused backgroundTile
+          backgroundTilep tile = tile == backgroundTile
+          backgroundNoiseTileIndices = [actualTileCount .. maxTileCount - 1]
+
+      addNoise tile = tile
+
+      tilesWithBackground
+        | Just color <- textBackgroundTile =
+            makeTileOfColor (fromIntegral color) : nub tiles
+        | otherwise =
+            nub tiles
+
+      makeTileOfColor color = replicate (tileHeight * tileWidth) (fromIntegral color)
 
       indexed = map index tiles
         where index tile = let Just n = Map.lookup tile table in n
@@ -105,6 +166,6 @@ tileImage Options{..} image palette =
           mapM_ generate (take count (zip [0..] tiles))
 
     in do
-      when (Map.size table > 255) exitFailure
+      when (Map.size table > maxTileCount) exitFailure
       if sprites then generateSprites else generateTiles
       when extractPalette (L.writeFile (replaceExtension filename ".palette") paletteData)
