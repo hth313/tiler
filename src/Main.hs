@@ -22,7 +22,6 @@ data Options = Options {
     extractPalette :: Bool,
     sprites :: Bool,
     spriteCount :: Maybe Int,
-    textBackgroundTile :: Maybe Int,
     noiseOnColor :: Maybe Int,
     noiseColors :: [Int],
     noiseLevel :: Int,
@@ -56,10 +55,6 @@ options = Options
            ( long "sprite-count"
            <> metavar "COUNT"
            <> help "Generate COUNT sprites, defaults to all in given file"))
-      <*> (optional $ option auto
-           ( long "text-background"
-           <> metavar "COLOR"
-           <> help "Use tile 0 as solid background (for text overlay), specify color used"))
       <*> (optional $ option auto
            ( long "noise-on-color"
            <> metavar "COLOR"
@@ -106,39 +101,30 @@ tileImage Options{..} image palette =
             rect = sequence [ [0 .. tileHeight - 1], [0 .. tileWidth - 1] ]
         in map (\[y,x] -> pixelAt image (x + xstart) (y + ystart)) rect
 
-      tiles = map tiledata tileCoordinates
+      tiles = nub $ map tiledata tileCoordinates
 
       table = Map.fromList $ zip tilesWithNoise [0..]
 
       (tilesWithNoise, backgroundTilep, backgroundNoiseTileIndices)
         | isNothing noiseOnColor = useNoNoiseTiles
         | null noiseColors = useNoNoiseTiles
-        | length tilesWithBackground < maxTileCount =
-            ( tilesHead <> map addNoise tilesTail <> map addNoise noiseTiles
+        | length tiles < maxTileCount =
+            ( map addNoise tilesNoBackground <> map addNoise noiseTiles
             , backgroundTilep
             , backgroundNoiseTileIndices)
         | otherwise = useNoNoiseTiles
         where
-          useNoNoiseTiles = (tilesWithBackground, const False, [])
+          useNoNoiseTiles = (tiles, const False, [])
           Just background = noiseOnColor
           backgroundTile = makeTileOfColor background
-          (tilesHead, tilesTail0)
-            | isJust textBackgroundTile = splitAt 1 tilesWithBackground
-            | otherwise = ([], tilesWithBackground)
-          tilesTail = backgroundTile `delete` tilesTail0
+          tilesNoBackground = backgroundTile `delete` tiles
           unused = maxTileCount - actualTileCount
-          actualTileCount = length (tilesHead <> tilesTail)
+          actualTileCount = length tilesNoBackground
           noiseTiles = replicate unused backgroundTile
           backgroundTilep tile = tile == backgroundTile
           backgroundNoiseTileIndices = [actualTileCount .. maxTileCount - 1]
 
       addNoise tile = tile
-
-      tilesWithBackground
-        | Just color <- textBackgroundTile =
-            makeTileOfColor (fromIntegral color) : nub tiles
-        | otherwise =
-            nub tiles
 
       makeTileOfColor color = replicate (tileHeight * tileWidth) (fromIntegral color)
 
