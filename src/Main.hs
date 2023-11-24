@@ -15,7 +15,6 @@ import Options.Applicative
 import System.Exit
 import System.FilePath
 import System.Random
-import Debug.Trace
 
 data Options = Options {
     tileWidth :: Int,
@@ -104,9 +103,14 @@ tileImage Options{..} rg image palette =
             rect = sequence [ [0 .. tileHeight - 1], [0 .. tileWidth - 1] ]
         in map (\[y,x] -> pixelAt image (x + xstart) (y + ystart)) rect
 
+      tilemap = map tiledata tileCoordinates
+
       tiles = nub $ map tiledata tileCoordinates
 
       table = Map.fromList $ zip tiles (zip [0..] tilesWithNoise)
+
+      noiseTiles = drop (Map.size table) tilesWithNoise
+      noiseTileCount = length noiseTiles
 
       tilesWithNoise
         | isNothing mbackgroundNoiseTileRange = tilesWithBlanks
@@ -126,23 +130,22 @@ tileImage Options{..} rg image palette =
 
       pixelCountTile = tileHeight * tileWidth
 
-      (tilesWithBlanks, backgroundTilep, mbackgroundNoiseTileRange)
+      (tilesWithBlanks, backgroundTile, mbackgroundNoiseTileRange)
         | isNothing noiseOnColor = useNoNoiseTiles
         | null noiseColors = useNoNoiseTiles
         | length tiles < maxTileCount =
             ( tilesNoBackground <> noiseTiles
-            , backgroundTilep
+            , backgroundTile
             , Just backgroundNoiseTileRange)
         | otherwise = useNoNoiseTiles
         where
-          useNoNoiseTiles = (tiles, const False, Nothing)
+          useNoNoiseTiles = (tiles, undefined, Nothing)
           Just background = noiseOnColor
           backgroundTile = makeTileOfColor background
           tilesNoBackground = backgroundTile `delete` tiles
           unused = maxTileCount - actualTileCount
           actualTileCount = length tilesNoBackground
           noiseTiles = replicate unused backgroundTile
-          backgroundTilep tile = tile == backgroundTile
           backgroundNoiseTileRange = (actualTileCount, maxTileCount - 1)
 
       addNoise (tile, randoms, noise) = go sortedRandoms (zip [0..] tile) noise
@@ -160,8 +163,19 @@ tileImage Options{..} rg image palette =
 
       makeTileOfColor color = replicate pixelCountTile (fromIntegral color)
 
-      indexed = map index tiles
-        where index tile = let Just (n, _noised) = Map.lookup tile table in n
+      indexedWithNoise
+        | isJust mbackgroundNoiseTileRange =
+            go indexed (randomRs backgroundNoiseTileRange rg)
+        | otherwise = indexed
+        where
+          indexed = map index tilemap
+          Just (blank, _noised) = Map.lookup backgroundTile table
+          Just backgroundNoiseTileRange = mbackgroundNoiseTileRange
+          index tile = let Just (n, _noised) = Map.lookup tile table in n
+          go [] _ = []
+          go (t:ts) (r:rs)
+            | t == blank = r : go ts rs
+            | otherwise = t : go ts rs
 
       tabledata = map (L.pack . snd . snd) (sortOn (fst . snd) (Map.assocs table))
 
@@ -170,9 +184,11 @@ tileImage Options{..} rg image palette =
               go _ = []
 
       generateTiles = do
-        putStrLn $ "using  " <> show (Map.size table) <> " tiles"
-        L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexed))
-        L.writeFile (replaceExtension filename ".tiledata") (mconcat tabledata)
+        putStrLn $ "using  " <> show (Map.size table + noiseTileCount) <> " tiles"
+        when (noiseTileCount > 0) (putStrLn $ "(" <> show noiseTileCount <> " noise tiles)")
+        L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexedWithNoise))
+        L.writeFile (replaceExtension filename ".tiledata")
+           (mconcat (tabledata <> map L.pack noiseTiles))
 
       generateSprites =
         let count = fromMaybe (length tiles) spriteCount
