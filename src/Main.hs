@@ -180,7 +180,7 @@ tileImage Options{..} rg image palette =
       tabledata = map (L.pack . snd . snd) (sortOn (fst . snd) (Map.assocs table))
 
       paletteData = L.pack $ go (V.toList $ imageData $ palettedAsImage palette)
-        where go (a:b:c:xs) = 0 : a : b : c : go xs
+        where go (a:b:c:xs) = c : b : a : 0 : go xs
               go _ = []
 
       generateTiles = do
