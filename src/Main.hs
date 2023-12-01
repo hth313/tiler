@@ -6,6 +6,7 @@ import Codec.Picture
 import Codec.Picture.Bitmap
 import Codec.Picture.Types
 import Control.Monad
+import Data.Bits
 import qualified Data.ByteString as L
 import Data.List
 import qualified Data.Map as Map
@@ -19,8 +20,11 @@ import System.Random
 data Options = Options {
     tileWidth :: Int,
     tileHeight :: Int,
+    tileLUT :: Int,
+    tileSet :: Int,
     maxTileCount :: Int,
     extractPalette :: Bool,
+    bigEndian :: Bool,
     sprites :: Bool,
     spriteCount :: Maybe Int,
     noiseOnColor :: Maybe Int,
@@ -42,6 +46,16 @@ options = Options
           <> value 16
           <> help "Tile or sprite height" )
       <*> option auto
+          ( long "tile-lut"
+          <> showDefault
+          <> value 0
+          <> help "Tile color look up table (0-7)")
+      <*> option auto
+          ( long "tile-set"
+          <> showDefault
+          <> value 0
+          <> help "Tile set number (0-7)")
+      <*> option auto
           ( long "max-tiles"
           <> showDefault
           <> value 256
@@ -49,6 +63,9 @@ options = Options
       <*> switch
           ( long "extract-palette"
           <> help "Extract and emit a .palette file")
+      <*> switch
+          ( long "big-endian"
+          <> help "Target is big endian")
       <*> switch
           ( long "sprites"
           <> help "Generate sprites")
@@ -177,6 +194,11 @@ tileImage Options{..} rg image palette =
             | t == blank = r : go ts rs
             | otherwise = t : go ts rs
 
+      addAttribute index
+        | bigEndian = [ attribute, fromIntegral index ]
+        | otherwise = [ fromIntegral index, attribute ]
+      attribute = fromIntegral $ (tileLUT `shiftL` 3) .|. tileSet
+
       tabledata = map (L.pack . snd . snd) (sortOn (fst . snd) (Map.assocs table))
 
       paletteData = L.pack $ go (V.toList $ imageData $ palettedAsImage palette)
@@ -186,7 +208,8 @@ tileImage Options{..} rg image palette =
       generateTiles = do
         putStrLn $ "using  " <> show (Map.size table + noiseTileCount) <> " tiles"
         when (noiseTileCount > 0) (putStrLn $ "(" <> show noiseTileCount <> " noise tiles)")
-        L.writeFile (replaceExtension filename ".index") (L.pack (map fromIntegral indexedWithNoise))
+        L.writeFile (replaceExtension filename ".index")
+                    (L.pack (concatMap addAttribute indexedWithNoise))
         L.writeFile (replaceExtension filename ".tiledata")
            (mconcat (tabledata <> map L.pack noiseTiles))
 
