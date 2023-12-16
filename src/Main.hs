@@ -124,7 +124,7 @@ tileImage Options{..} rg image palette =
 
       tiles = nub $ map tiledata tileCoordinates
 
-      table = Map.fromList $ zip tiles (zip [0..] tilesWithNoise)
+      table = Map.fromList $ zip keyTiles (zip [0..] tilesWithNoise)
 
       noiseTiles = drop (Map.size table) tilesWithNoise
       noiseTileCount = length noiseTiles
@@ -147,19 +147,23 @@ tileImage Options{..} rg image palette =
 
       pixelCountTile = tileHeight * tileWidth
 
-      (tilesWithBlanks, backgroundTile, mbackgroundNoiseTileRange)
+      (keyTiles, tilesWithBlanks, backgroundTile, mbackgroundNoiseTileRange)
         | isNothing noiseOnColor = useNoNoiseTiles
         | null noiseColors = useNoNoiseTiles
         | length tiles < maxTileCount =
-            ( tilesNoBackground <> noiseTiles
+            ( tilesNoBackground <> tailedBackground
+            , tilesNoBackground <> noiseTiles
             , backgroundTile
             , Just backgroundNoiseTileRange)
         | otherwise = useNoNoiseTiles
         where
-          useNoNoiseTiles = (tiles, undefined, Nothing)
+          useNoNoiseTiles = (tiles, tiles, undefined, Nothing)
           Just background = noiseOnColor
           backgroundTile = makeTileOfColor background
           tilesNoBackground = backgroundTile `delete` tiles
+          tailedBackground
+            | backgroundTile `elem` tiles = [backgroundTile]
+            | otherwise = []
           unused = maxTileCount - actualTileCount
           actualTileCount = length tilesNoBackground
           noiseTiles = replicate unused backgroundTile
