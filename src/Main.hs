@@ -221,13 +221,14 @@ tileImage Options{..} rg image palette =
            (mconcat (tabledata <> map L.pack noiseTiles))
 
       generateSprites =
-        let count = fromMaybe (length tiles) spriteCount
+        let count = min (length tilemap) (fromMaybe tileCount spriteCount)
+            tileCount = length tilemap
             generate (n, spriteData) =
               let spritefile = dropExtension basefile <> "-" <> show n -<.> ".sprite"
               in L.writeFile spritefile (L.pack spriteData)
         in do
           putStrLn $ "generating  " <> show count <> " sprites"
-          mapM_ generate (take count (zip [0..] tiles))
+          mapM_ generate (take count (zip [0..] tilemap))
 
     in do
       when (Map.size table > maxTileCount) exitFailure
