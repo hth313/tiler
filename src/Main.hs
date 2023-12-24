@@ -16,6 +16,7 @@ import Options.Applicative
 import System.Exit
 import System.FilePath
 import System.Random
+import System.FilePath.Posix (takeFileName)
 
 data Options = Options {
     tileWidth :: Int,
@@ -209,18 +210,20 @@ tileImage Options{..} rg image palette =
         where go (a:b:c:xs) = c : b : a : 0 : go xs
               go _ = []
 
+      basefile = takeFileName $ dropExtension filename
+
       generateTiles = do
         putStrLn $ "using  " <> show (Map.size table + noiseTileCount) <> " tiles"
         when (noiseTileCount > 0) (putStrLn $ "(" <> show noiseTileCount <> " noise tiles)")
-        L.writeFile (replaceExtension filename ".index")
+        L.writeFile (replaceExtension basefile ".index")
                     (L.pack (concatMap addAttribute indexedWithNoise))
-        L.writeFile (replaceExtension filename ".tiledata")
+        L.writeFile (replaceExtension basefile ".tiledata")
            (mconcat (tabledata <> map L.pack noiseTiles))
 
       generateSprites =
         let count = fromMaybe (length tiles) spriteCount
             generate (n, spriteData) =
-              let spritefile = dropExtension filename <> "-" <> show n -<.> ".sprite"
+              let spritefile = dropExtension basefile <> "-" <> show n -<.> ".sprite"
               in L.writeFile spritefile (L.pack spriteData)
         in do
           putStrLn $ "generating  " <> show count <> " sprites"
@@ -229,4 +232,4 @@ tileImage Options{..} rg image palette =
     in do
       when (Map.size table > maxTileCount) exitFailure
       if sprites then generateSprites else generateTiles
-      when extractPalette (L.writeFile (replaceExtension filename ".palette") paletteData)
+      when extractPalette (L.writeFile (replaceExtension basefile ".palette") paletteData)
