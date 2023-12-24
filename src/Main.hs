@@ -15,6 +15,7 @@ import qualified Data.Vector.Storable as V
 import Options.Applicative
 import System.Exit
 import System.FilePath
+import System.IO
 import System.Random
 import System.FilePath.Posix (takeFileName)
 
@@ -231,6 +232,7 @@ tileImage Options{..} rg image palette =
           mapM_ generate (take count (zip [0..] tilemap))
 
     in do
-      when (Map.size table > maxTileCount) exitFailure
+      when (Map.size table > maxTileCount)
+           (hPutStrLn stderr ("too many tiles: " <> show (Map.size table)) >> exitFailure)
       if sprites then generateSprites else generateTiles
       when extractPalette (L.writeFile (replaceExtension basefile ".palette") paletteData)
