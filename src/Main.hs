@@ -20,6 +20,8 @@ import System.Random
 import System.FilePath.Posix (takeFileName)
 
 data Options = Options {
+    amiga :: Bool,
+    foenix :: Bool,
     tileWidth :: Int,
     tileHeight :: Int,
     tileLUT :: Int,
@@ -29,6 +31,7 @@ data Options = Options {
     bigEndian :: Bool,
     sprites :: Bool,
     spriteCount :: Maybe Int,
+    bitplanes :: Maybe Int,
     noiseOnColor :: Maybe Int,
     noiseColors :: [Int],
     noiseLevel :: Int,
@@ -37,7 +40,13 @@ data Options = Options {
 
 options :: Parser Options
 options = Options
-      <$> option auto
+      <$> switch
+          ( long "amiga"
+          <> help "Amiga (ACE) tiles")
+      <*> switch
+          ( long "foenix"
+          <> help "Foenix tiles")
+      <*>  option auto
           ( long "width"
           <> showDefault
           <> value 16
@@ -75,6 +84,10 @@ options = Options
            ( long "sprite-count"
            <> metavar "COUNT"
            <> help "Generate COUNT sprites, defaults to all in given file"))
+      <*> (optional $ option auto
+           ( long "bitplanes"
+           <> metavar "N"
+           <> help "Generate a given number of bitplanes instead of chunky pixels)"))
       <*> (optional $ option auto
            ( long "noise-on-color"
            <> metavar "COLOR"
@@ -201,11 +214,12 @@ tileImage Options{..} rg image palette =
             | otherwise = t : go ts rs
 
       addAttribute index
+        | amiga     = [ fromIntegral (index `shiftR` 8), fromIntegral index ]
         | bigEndian = [ attribute, fromIntegral index ]
         | otherwise = [ fromIntegral index, attribute ]
       attribute = fromIntegral $ (tileLUT `shiftL` 3) .|. tileSet
 
-      tabledata = map (L.pack . snd . snd) (sortOn (fst . snd) (Map.assocs table))
+      tabledata = map (snd . snd) (sortOn (fst . snd) (Map.assocs table))
 
       paletteData = L.pack $ go (V.toList $ imageData $ palettedAsImage palette)
         where go (a:b:c:xs) = c : b : a : 0 : go xs
@@ -218,18 +232,42 @@ tileImage Options{..} rg image palette =
         when (noiseTileCount > 0) (putStrLn $ "(" <> show noiseTileCount <> " noise tiles)")
         L.writeFile (replaceExtension basefile ".index")
                     (L.pack (concatMap addAttribute indexedWithNoise))
-        L.writeFile (replaceExtension basefile ".tiledata")
-           (mconcat (tabledata <> map L.pack noiseTiles))
+        let (warns, finaTiles) = unzip $ map organizeOuput (tabledata <> noiseTiles)
+            warn = listToMaybe $ catMaybes warns
+            tileData = mconcat (map L.pack finaTiles)
+        when (isJust warn) (errout (fromJust warn))
+        L.writeFile (replaceExtension basefile ".tiledata") tileData
 
       generateSprites =
         let count = min (length tilemap) (fromMaybe tileCount spriteCount)
             tileCount = length tilemap
             generate (n, spriteData) =
               let spritefile = dropExtension basefile <> "-" <> show n -<.> ".sprite"
-              in L.writeFile spritefile (L.pack spriteData)
+                  (warn, finalData) = organizeOuput spriteData
+              in do
+                when (isJust warn) (errout (fromJust warn))
+                L.writeFile spritefile (L.pack finalData)
         in do
           putStrLn $ "generating  " <> show count <> " sprites"
           mapM_ generate (take count (zip [0..] tilemap))
+
+      organizeOuput values = case bitplanes of
+        Nothing -> (Nothing, values)
+        Just n -> generateBitplanes n values
+
+      generateBitplanes 0 values
+        | any (/=0) values = (Just "bit data outside bitplane count", [])
+        | otherwise = (Nothing, [])
+      generateBitplanes n values =
+        let valuesHere = map (.&. 1) values
+            bits = flattenBitplane valuesHere
+        in (bits <>) <$> generateBitplanes (n - 1) (map (`shiftR` 1) values)
+      flattenBitplane [] = []
+      flattenBitplane values
+        | bigEndian =
+            let (bits, xs) = splitAt 8 values
+                x = foldl (\acc b -> (acc `shiftL` 1) .|. b) 0 bits
+            in x : flattenBitplane xs
 
     in do
       when (Map.size table > maxTileCount)
